@@ -11,7 +11,7 @@ from color import ColorSensor
 holes = 16
 one_hole = 512 // holes
 
-motor = Stepper([9, 10, 11, 12])
+motor = Stepper([9, 10, 11, 12], rpm=1.5*60/holes, mode='wave')
 button1 = Button(4)
 button2 = Button(5)
 color_sensor = ColorSensor(machine.I2C(0, sda=machine.Pin(0), scl=machine.Pin(1), freq=400000), led_pin_num=2)
@@ -63,13 +63,15 @@ while True:
 
     print("Sorting started! Press any button to stop.")
 
+    print("     R      G      B      C   Neo RGB")
+
     while initializing == False:
         motor.step(one_hole)
         r, g, b, c = color_sensor.read_rgbc()
         g = int(g * 1.3)
         b = int(b * 1.6)
         r_v, g_v, b_v = get_vibrant_color(r, g, b, c, gamma=3, brightness=150)
-        print(f"RGB Clear Data: R={r}, G={g}, B={b}, C={c}, Vibrant RGB: ({r_v}, {g_v}, {b_v})")
+        print(f"{r:>6} {g:>6} {b:>6} {c:>6}   ({r_v}, {g_v}, {b_v})")
 
         if c > 0:
             led(r_v, g_v, b_v)
