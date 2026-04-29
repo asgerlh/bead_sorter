@@ -25,7 +25,7 @@ class ColorSensor:
         integration_periods = 100
         self.integration_time_ms = 2.4 * integration_periods
         self._write_byte(0x01, 0xFF - integration_periods) # Integration time
-        self._write_byte(0x0F, 0x03) # Gain
+        self._write_byte(0x0F, 0x02) # Gain
 
     def _write_byte(self, reg, value):
         # 0x80 is the command bit required for every transaction
