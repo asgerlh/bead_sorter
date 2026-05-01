@@ -1,8 +1,15 @@
-from machine import Pin, I2C
+from machine import Pin
+import machine
 import time
 import ustruct
 
 class ColorSensor:
+    """Class to interface with the TCS34725 color sensor, including LED control and RGB/C data reading.
+    The sensor is initialized with the I2C interface and an optional LED pin for illumination control.
+    i2c: An initialized I2C object for communication with the sensor.
+    led_pin_num: GPIO pin number for controlling the sensor's LED (optional).
+    address: I2C address of the TCS34725 sensor (default is 0x29).
+    """
     def __init__(self, i2c, led_pin_num=None, address=0x29):
         self.i2c = i2c
         self.address = address
@@ -88,7 +95,7 @@ class ColorSensor:
         self._write_byte(0x00, 0x01) # Disable ADC again
         
         return data
-
+    
 # --- Usage Example for RP2040-Zero ---
 #i2c0 = I2C(0, sda=Pin(0), scl=Pin(1), freq=400000)
 #sensor = ColorSensor(i2c0, led_pin_num=2)
@@ -103,3 +110,26 @@ class ColorSensor:
 #    sensor.set_led(False)
 #    print("Data:", data)
 #    time.sleep(.5)
+
+def norm(v):
+    """Returns the Euclidean norm (magnitude) of a vector v."""
+    return sum(x**2 for x in v)**0.5
+
+
+def distance(v1, v2):
+    """Calculates the Euclidean distance between two vectors.
+    v1, v2: Vectors (e.g., RGB tuples) to compare.
+    """
+    return sum((a - b) ** 2 for a, b in zip(v1, v2)) ** 0.5
+
+def normalize_color(rgb, threshold=2400):
+    """Normalizes an RGB color tuple to the range 0.0 - 1.0, applying a threshold to filter out very dark colors.
+
+    If the norm of the RGB vector is below the threshold, it returns (0, 0, 0) to indicate no color.
+    rgb: Tuple of raw RGB values (e.g., from the sensor).
+    threshold: Minimum norm value to consider the color valid.
+    """
+    n = norm(rgb)
+    if n < threshold:
+        return 0, 0, 0
+    return tuple(x / n for x in rgb)
