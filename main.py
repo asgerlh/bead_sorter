@@ -2,16 +2,21 @@ import machine
 import time
 import neopixel
 
-
 from stepper import Stepper
 from button import Button
 from color import ColorSensor
 
+# Distance from normalized (0.0 - 1.0) reference color to consider a match.
+distance_thresholds = 0.1
+
 # One hole is 16 steps for a 28BYJ-48 stepper motor
 holes = 16
 one_hole = 512 // holes
+flipper_steps = 40
+backlash = 3
 
-motor = Stepper([9, 10, 11, 12], rpm=1.5*60/holes, mode='wave')
+disc_motor = Stepper([9, 10, 11, 12], rpm=1.5*60/holes, mode='wave')
+flipper_motor = Stepper([26, 27, 28, 29], rpm=10, mode='wave')
 button1 = Button(4)
 button2 = Button(5)
 color_sensor = ColorSensor(machine.I2C(0, sda=machine.Pin(0), scl=machine.Pin(1), freq=400000), led_pin_num=2)
@@ -42,9 +47,17 @@ def get_vibrant_color(r_raw, g_raw, b_raw, c_raw, gamma=2.2, brightness=255):
     scale = brightness
     return (int(r * scale), int(g * scale), int(b * scale))
 
+def normalize_color(rgb, threshold=2400):
+    norm = sum([x**2 for x in rgb])**0.5
+    if norm < threshold:
+        return 0, 0, 0
+    return tuple(x / norm for x in rgb)
+
+def color_distance(c1, c2):
+    return sum((a - b) ** 2 for a, b in zip(c1, c2)) ** 0.5
 
 while True:
-    print("Align hole by pressing button 1. Insert bead and press second button to start.")
+    print("Align hole by pressing button 1. Insert reference bead and press second button to start.")
 
     color_sensor.set_led(True)
     led(5, 5, 5)  # Red LED to indicate initialization mode
@@ -52,31 +65,50 @@ while True:
     initializing = True
     while initializing:
         if button1.is_pressed():
-            motor.step(-1)  # Rotate backwards
+            disc_motor.step(-1)  # Rotate backwards
         if button2.is_pressed():
             initializing = False  # Exit loop to start main operation
         time.sleep(0.12)
 
     color_sensor.set_led(False)
 
-    motor.step(3) # Backlash correction
+    disc_motor.step(backlash)
 
-    print("Sorting started! Press any button to stop.")
+    disc_motor.step(one_hole)
+    
+    print("Scanning reference color.")
 
-    print("     R      G      B      C   Neo RGB")
+    ref_rgbc = color_sensor.read_rgbc()
+    ref_rgb = normalize_color(ref_rgbc[:3])
+
+    print("Reference color is:\nrgb: {:.2f}, {:.2f}, {:.2f}".format(*ref_rgb))
+
+    led(*(int(x ** 3 * 50) for x in ref_rgb))  # Show reference color with LED
+
+    print("Homing flipper")
+    flipper_motor.step(flipper_steps)  # Move flipper to initial position
+    flipper_position = True
 
     while initializing == False:
-        motor.step(one_hole)
-        r, g, b, c = color_sensor.read_rgbc()
-        g = int(g * 1.3)
-        b = int(b * 1.6)
-        r_v, g_v, b_v = get_vibrant_color(r, g, b, c, gamma=3, brightness=150)
-        print(f"{r:>6} {g:>6} {b:>6} {c:>6}   ({r_v}, {g_v}, {b_v})")
+        disc_motor.step(one_hole)
+        
+        rgbc = color_sensor.read_rgbc()
+        
+        rgb = normalize_color(rgbc[:3])
+        
+        led(*(int(x ** 3 * 50) for x in rgb))  # Show current color with LED
 
-        if c > 0:
-            led(r_v, g_v, b_v)
-        else:
-            led(0, 0, 0)
+        distance = color_distance(rgb, ref_rgb)
+        match = distance < distance_thresholds
+
+        if match and flipper_position == False:
+            flipper_motor.step(flipper_steps)
+            flipper_position = True
+        elif not match and flipper_position == True:
+            flipper_motor.step(-flipper_steps)
+            flipper_position = False
+
+        print("rgb: {:.2f}, {:.2f}, {:.2f}, dist: {:.2f}, match: {}".format(*rgb, distance, match))
 
         if button1.is_pressed() or button2.is_pressed():
             print("Stopping sorting...")
