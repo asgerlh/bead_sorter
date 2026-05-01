@@ -55,10 +55,23 @@ while True:
     flipper_motor.step(flipper_steps)  # Move flipper to initial position
     flipper_position = True
 
+    last_rgbc = ref_rgbc
+    same_color_count = 0
     while initializing == False:
         disc_motor.step(one_hole)
         
         rgbc = color_sensor.read_rgbc()
+
+        if distance(rgbc, last_rgbc) < 1000:
+            same_color_count += 1
+            if same_color_count > 3:
+                print("Warning: Color readings are not changing. Backing up to try to get unstuck.")
+                disc_motor.step(-15)
+                same_color_count = 0
+        else:
+            same_color_count = 0
+
+        last_rgbc = rgbc
         
         rgb = normalize_color(rgbc[:3])
         
