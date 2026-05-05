@@ -47,7 +47,7 @@ while True:
     ref_rgbc = color_sensor.read_rgbc()
     ref_rgb = normalize_color(ref_rgbc[:3])
 
-    print("Reference color is:\nrgb: {:.2f}, {:.2f}, {:.2f}".format(*ref_rgb))
+    print("Reference color is:\nrgb: {:.2f}, {:.2f}, {:.2f}, raw: {:5}, {:5}, {:5}, {:5}".format(*ref_rgb, *ref_rgbc))
 
     led.set_color(ref_rgb)  # Show reference color with LED
 
@@ -87,7 +87,7 @@ while True:
             flipper_motor.step(-flipper_steps)
             flipper_position = False
 
-        print("rgb: {:.2f}, {:.2f}, {:.2f}, dist: {:.2f}, match: {}".format(*rgb, dist, match))
+        print("rgb: {:.2f}, {:.2f}, {:.2f}, raw: {:5}, {:5}, {:5}, {:5}, dist: {:.2f}, match: {}".format(*rgb, *rgbc, dist, match))
 
         if button1.is_pressed() or button2.is_pressed():
             print("Stopping sorting...")

@@ -29,10 +29,10 @@ class ColorSensor:
         # Enable the device (Power ON)
         self._write_byte(0x00, 0x01) # Power ON
         time.sleep(0.1)
-        integration_periods = 100
+        integration_periods = 21  # 21 periods = 50ms integration time
         self.integration_time_ms = 2.4 * integration_periods
         self._write_byte(0x01, 0xFF - integration_periods) # Integration time
-        self._write_byte(0x0F, 0x02) # Gain
+        self._write_byte(0x0F, 0x03) # Gain
 
     def _write_byte(self, reg, value):
         # 0x80 is the command bit required for every transaction
