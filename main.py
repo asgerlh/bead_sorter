@@ -3,11 +3,11 @@ import time
 
 from stepper import Stepper
 from button import Button
-from color import ColorSensor, normalize_color, distance
+from color import ColorSensor, weighted_color, distance
 from led import LED
 
 # Distance from normalized (0.0 - 1.0) reference color to consider a match.
-distance_thresholds = 0.1
+distance_thresholds = 0.08
 
 # One hole is 16 steps for a 28BYJ-48 stepper motor
 holes = 16
@@ -16,8 +16,8 @@ color_steps = 3
 flipper_steps = 40
 backlash = 3
 
-disc_motor = Stepper([9, 10, 11, 12], rpm=1.5*60/holes, mode='wave')
-flipper_motor = Stepper([26, 27, 28, 29], rpm=10, mode='wave')
+disc_motor = Stepper([9, 10, 11, 12], rpm=3*60/holes, mode='full')
+flipper_motor = Stepper([26, 27, 28, 29], rpm=22, mode='full')
 button1 = Button(4)
 button2 = Button(5)
 color_sensor = ColorSensor(machine.I2C(0, sda=machine.Pin(0), scl=machine.Pin(1), freq=400000), led_pin_num=2)
@@ -28,18 +28,18 @@ def move_and_read_color():
     
     num_readings = 3
     rgbc = color_sensor.read_rgbc()
-    print("RGBC:", rgbc)
+    #print("RGBC:", rgbc)
     for _ in range(1, num_readings):
         disc_motor.step(color_steps)
         tmp = color_sensor.read_rgbc()
-        print("RGBC:", tmp)
+        #print("RGBC:", tmp)
         if tmp[3] > rgbc[3]:  # Compare clear channel to find the reading with the most light (best reading)
             rgbc = tmp
     
     return rgbc
 
 while True:
-    print("Align hole by pressing button 1. Insert reference bead and press second button to start.")
+    #print("Align hole by pressing button 1. Insert reference bead and press second button to start.")
 
     color_sensor.set_led(True)
     led.set_color((1.0, 0.0, 0.0))  # Red LED to indicate initialization mode
@@ -56,40 +56,41 @@ while True:
 
     disc_motor.step(backlash)
 
-    print("Scanning reference color.")
+    #print("Scanning reference color.")
 
     ref_rgbc = move_and_read_color()
-    ref_rgb = normalize_color(ref_rgbc[:3])
+    ref_rgbw = weighted_color(ref_rgbc)
 
-    print("Reference color is:\nrgb: {:.2f}, {:.2f}, {:.2f}, raw: {:5}, {:5}, {:5}, {:5}".format(*ref_rgb, *ref_rgbc))
+    #print("Reference color is:\nrgbw: {:.2f}, {:.2f}, {:.2f}, {:.2f}, raw: {:5}, {:5}, {:5}, {:5}".format(*ref_rgbw, *ref_rgbc))
 
-    led.set_color(ref_rgb)  # Show reference color with LED
+    led.set_color(ref_rgbw)  # Show reference color with LED
 
-    print("Homing flipper")
+    #print("Homing flipper")
     flipper_motor.step(flipper_steps)  # Move flipper to initial position
     flipper_position = True
 
-    last_rgbc = ref_rgbc
-    same_color_count = 0
+    #last_rgbc = ref_rgbc
+    #same_color_count = 0
     while initializing == False:
         rgbc = move_and_read_color()
 
-        if distance(rgbc, last_rgbc) < 1000:
-            same_color_count += 1
-            if same_color_count > 3:
-                print("Warning: Color readings are not changing. Backing up to try to get unstuck.")
-                disc_motor.step(-15)
-                same_color_count = 0
-        else:
-            same_color_count = 0
-
-        last_rgbc = rgbc
+        #if distance(rgbc, last_rgbc) < 1000:
+        #    same_color_count += 1
+        #    if same_color_count > 3:
+        #        print("Warning: Color readings are not changing. Backing up to try to get unstuck.")
+        #        disc_motor.step(-15)
+        #        same_color_count = 0
+        #else:
+        #    same_color_count = 0
+        #
+        #last_rgbc = rgbc
         
-        rgb = normalize_color(rgbc[:3])
+        #rgb = normalize_color(rgbc[:3])
+        rgbw = weighted_color(rgbc)
         
-        led.set_color(rgb)  # Show current color with LED
+        #led.set_color(rgbw[:3])  # Show current color with LED
 
-        dist = distance(rgb, ref_rgb)
+        dist = distance(rgbw, ref_rgbw)
         match = dist < distance_thresholds
 
         if match and flipper_position == False:
@@ -99,8 +100,8 @@ while True:
             flipper_motor.step(-flipper_steps)
             flipper_position = False
 
-        print("rgb: {:.2f}, {:.2f}, {:.2f}, raw: {:5}, {:5}, {:5}, {:5}, dist: {:.2f}, match: {}".format(*rgb, *rgbc, dist, match))
+        #print("rgbw: {:.2f}, {:.2f}, {:.2f}, {:.2f}, raw: {:5}, {:5}, {:5}, {:5}, dist: {:.2f}, match: {}".format(*rgbw, *rgbc, dist, match))
 
         if button1.is_pressed() or button2.is_pressed():
-            print("Stopping sorting...")
+            #print("Stopping sorting...")
             break

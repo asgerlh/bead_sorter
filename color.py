@@ -122,7 +122,7 @@ def distance(v1, v2):
     """
     return sum((a - b) ** 2 for a, b in zip(v1, v2)) ** 0.5
 
-def normalize_color(rgb, threshold=2400):
+def normalize_color(rgb, threshold=500):
     """Normalizes an RGB color tuple to the range 0.0 - 1.0, applying a threshold to filter out very dark colors.
 
     If the norm of the RGB vector is below the threshold, it returns (0, 0, 0) to indicate no color.
@@ -133,3 +133,9 @@ def normalize_color(rgb, threshold=2400):
     if n < threshold:
         return 0, 0, 0
     return tuple(x / n for x in rgb)
+
+def weighted_color(rgbc):
+    clear_norm = 100000
+    rgbw = list(normalize_color(rgbc[:3]))
+    rgbw.append(rgbc[3] / clear_norm)  # Add normalized clear channel as weight
+    return rgbw
