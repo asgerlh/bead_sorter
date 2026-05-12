@@ -17,8 +17,8 @@ color_steps = 3
 flipper_steps = 40
 backlash = 3
 
-disc_motor = DiscMotor(9, revolutions_per_second=3/holes)  # 1 hole per second
-flipper_motor = FlipperMotor(26, revolutions_per_second=0.32)
+disc_motor = DiscMotor(9, revolutions_per_second=3.5/holes)  # 1 hole per second
+flipper_motor = FlipperMotor(26, revolutions_per_second=0.30)
 button1 = Button(4)
 button2 = Button(5)
 color_sensor = ColorSensor(machine.I2C(0, sda=machine.Pin(0), scl=machine.Pin(1), freq=400000), led_pin_num=2)
