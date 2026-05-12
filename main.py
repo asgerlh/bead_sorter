@@ -1,13 +1,14 @@
+import os
 import machine
 import time
 
-from stepper import Stepper
+from piostepper import DiscMotor, FlipperMotor
 from button import Button
-from color import ColorSensor, weighted_color, distance
+from color import ColorSensor, normalize_rgbc, distance
 from led import LED
 
 # Distance from normalized (0.0 - 1.0) reference color to consider a match.
-distance_thresholds = 0.08
+distance_thresholds = 0.05
 
 # One hole is 16 steps for a 28BYJ-48 stepper motor
 holes = 16
@@ -16,27 +17,58 @@ color_steps = 3
 flipper_steps = 40
 backlash = 3
 
-disc_motor = Stepper([9, 10, 11, 12], rpm=3*60/holes, mode='full')
-flipper_motor = Stepper([26, 27, 28, 29], rpm=22, mode='full')
+disc_motor = DiscMotor(9, revolutions_per_second=3/holes)  # 1 hole per second
+flipper_motor = FlipperMotor(26, revolutions_per_second=0.32)
 button1 = Button(4)
 button2 = Button(5)
 color_sensor = ColorSensor(machine.I2C(0, sda=machine.Pin(0), scl=machine.Pin(1), freq=400000), led_pin_num=2)
 led = LED(pin_num=16, brightness=50.0, gamma=2.2)
 
-def move_and_read_color():
-    disc_motor.step(one_hole - 2 * color_steps)  # Move to position for color reading, accounting for color reading steps
-    
-    num_readings = 3
+reference_color = None
+flipper_position = False
+new_color = False
+rgbc = (0, 0, 0, 0)
+
+def irq_handler(sm):
+    global reference_color
+    global flipper_position
+    global new_color
+    global rgbc
+
     rgbc = color_sensor.read_rgbc()
-    #print("RGBC:", rgbc)
-    for _ in range(1, num_readings):
-        disc_motor.step(color_steps)
-        tmp = color_sensor.read_rgbc()
-        #print("RGBC:", tmp)
-        if tmp[3] > rgbc[3]:  # Compare clear channel to find the reading with the most light (best reading)
-            rgbc = tmp
-    
-    return rgbc
+    new_color = True
+    rgb = normalize_rgbc(rgbc)
+
+    if reference_color is None:
+        reference_color = rgb
+        flipper_motor.flip(True)  # Move flipper to initial position
+        flipper_position = True
+        led.set_color(reference_color[:3], brightness=50.0, gamma=2.2)  # Show reference color with LED
+    else:
+        dist = distance(rgb, reference_color)
+
+        match = dist < distance_thresholds
+
+        if match and flipper_position == False:
+            #disc_motor.pause()
+            flipper_motor.flip(True)
+            flipper_position = True
+            #disc_motor.resume()
+        elif not match and flipper_position == True:
+            #disc_motor.pause()
+            flipper_motor.flip(False)
+            flipper_position = False
+            #disc_motor.resume()
+
+disc_motor.set_irq_handler(irq_handler)
+
+file_number = 0
+files = os.listdir("data")
+for file in files:
+    if file.startswith("colors") and file.endswith(".csv"):
+        num = int(file[len("colors"):-4])
+        if num > file_number:
+            file_number = num
 
 while True:
     #print("Align hole by pressing button 1. Insert reference bead and press second button to start.")
@@ -54,54 +86,21 @@ while True:
 
     color_sensor.set_led(False)
 
-    disc_motor.step(backlash)
+    file_number += 1
+    with open("data/colors{}.csv".format(file_number), "w") as fh:
+        fh.write("R, G, B, C\n")
 
-    #print("Scanning reference color.")
+        disc_motor.step(backlash)
 
-    ref_rgbc = move_and_read_color()
-    ref_rgbw = weighted_color(ref_rgbc)
+        reference_color = None
+        disc_motor.start()
 
-    #print("Reference color is:\nrgbw: {:.2f}, {:.2f}, {:.2f}, {:.2f}, raw: {:5}, {:5}, {:5}, {:5}".format(*ref_rgbw, *ref_rgbc))
-
-    led.set_color(ref_rgbw)  # Show reference color with LED
-
-    #print("Homing flipper")
-    flipper_motor.step(flipper_steps)  # Move flipper to initial position
-    flipper_position = True
-
-    #last_rgbc = ref_rgbc
-    #same_color_count = 0
-    while initializing == False:
-        rgbc = move_and_read_color()
-
-        #if distance(rgbc, last_rgbc) < 1000:
-        #    same_color_count += 1
-        #    if same_color_count > 3:
-        #        print("Warning: Color readings are not changing. Backing up to try to get unstuck.")
-        #        disc_motor.step(-15)
-        #        same_color_count = 0
-        #else:
-        #    same_color_count = 0
-        #
-        #last_rgbc = rgbc
-        
-        #rgb = normalize_color(rgbc[:3])
-        rgbw = weighted_color(rgbc)
-        
-        #led.set_color(rgbw[:3])  # Show current color with LED
-
-        dist = distance(rgbw, ref_rgbw)
-        match = dist < distance_thresholds
-
-        if match and flipper_position == False:
-            flipper_motor.step(flipper_steps)
-            flipper_position = True
-        elif not match and flipper_position == True:
-            flipper_motor.step(-flipper_steps)
-            flipper_position = False
-
-        #print("rgbw: {:.2f}, {:.2f}, {:.2f}, {:.2f}, raw: {:5}, {:5}, {:5}, {:5}, dist: {:.2f}, match: {}".format(*rgbw, *rgbc, dist, match))
-
-        if button1.is_pressed() or button2.is_pressed():
-            #print("Stopping sorting...")
-            break
+        while initializing == False:
+            if new_color:
+                fh.write("{}, {}, {}, {}\n".format(*rgbc))
+                new_color = False
+            if button1.is_pressed() or button2.is_pressed():
+                disc_motor.stop()
+                disc_motor.step(-int(2.3 * one_hole))  # Rotate back to allow placemnet of new reference bead
+                break
+            time.sleep(0.1)

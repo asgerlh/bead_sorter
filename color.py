@@ -29,10 +29,10 @@ class ColorSensor:
         # Enable the device (Power ON)
         self._write_byte(0x00, 0x01) # Power ON
         time.sleep(0.1)
-        integration_periods = 15  # 15 periods = 36ms integration time
+        integration_periods = 20  # 20 periods = 48ms integration time
         self.integration_time_ms = 2.4 * integration_periods
         self._write_byte(0x01, 0xFF - integration_periods) # Integration time
-        self._write_byte(0x0F, 0x03) # Gain
+        self._write_byte(0x0F, 0x02) # Gain
 
     def _write_byte(self, reg, value):
         # 0x80 is the command bit required for every transaction
@@ -121,6 +121,16 @@ def distance(v1, v2):
     v1, v2: Vectors (e.g., RGB tuples) to compare.
     """
     return sum((a - b) ** 2 for a, b in zip(v1, v2)) ** 0.5
+
+def normalize_rgbc(rgbc):
+    """Normalizes an RGBC color tuple by its clear channel.
+
+    If the clear channel value is zero, it returns (0, 0, 0) to indicate no color.
+    rgbc: Tuple of raw RGBC values (e.g., from the sensor).
+    """
+    if rgbc[3] == 0: # Avoid division by zero
+        return 0, 0, 0
+    return tuple(x / rgbc[3] for x in rgbc[:3])
 
 def normalize_color(rgb, threshold=500):
     """Normalizes an RGB color tuple to the range 0.0 - 1.0, applying a threshold to filter out very dark colors.
