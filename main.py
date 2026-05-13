@@ -8,14 +8,14 @@ from color import ColorSensor, normalize_rgbc, distance
 from led import LED
 
 # Distance from normalized (0.0 - 1.0) reference color to consider a match.
-distance_thresholds = 0.05
+distance_thresholds = 0.035
 
 # One hole is 16 steps for a 28BYJ-48 stepper motor
 holes = 16
 one_hole = 512 // holes
 color_steps = 3
 flipper_steps = 40
-backlash = 3
+start_offset = -5
 
 disc_motor = DiscMotor(9, revolutions_per_second=3.5/holes)  # 1 hole per second
 flipper_motor = FlipperMotor(26, revolutions_per_second=0.30)
@@ -70,37 +70,44 @@ for file in files:
         if num > file_number:
             file_number = num
 
+reference_color = None
 while True:
-    #print("Align hole by pressing button 1. Insert reference bead and press second button to start.")
+    if reference_color is None:
+        led.set_color((0.0, 0.0, 0.0)) # Turn off LED until reference color is set
 
-    color_sensor.set_led(True)
-    led.set_color((1.0, 0.0, 0.0))  # Red LED to indicate initialization mode
-
-    initializing = True
-    while initializing:
+    color_sensor.set_led(True) # Turn on the color sensor LED to help with alignment
+    while True:
         if button1.is_pressed():
-            disc_motor.step(-1)  # Rotate backwards
+            disc_motor.step(-1)
         if button2.is_pressed():
-            initializing = False  # Exit loop to start main operation
+            break
         time.sleep(0.12)
-
     color_sensor.set_led(False)
 
     file_number += 1
     with open("data/colors{}.csv".format(file_number), "w") as fh:
         fh.write("R, G, B, C\n")
 
-        disc_motor.step(backlash)
+        disc_motor.step(start_offset) # Also includes backlash
 
-        reference_color = None
         disc_motor.start()
 
-        while initializing == False:
+        while True:
+            # Step back a little and allow manual alignment
+            if button1.is_pressed():
+                disc_motor.stop()
+                disc_motor.step(-5)
+                break
+
+            # Rotate back for new reference bead
+            if button2.is_pressed():
+                disc_motor.stop()
+                disc_motor.step(-int(2.3 * one_hole))
+                reference_color = None
+                break
+
             if new_color:
                 fh.write("{}, {}, {}, {}\n".format(*rgbc))
                 new_color = False
-            if button1.is_pressed() or button2.is_pressed():
-                disc_motor.stop()
-                disc_motor.step(-int(2.3 * one_hole))  # Rotate back to allow placemnet of new reference bead
-                break
-            time.sleep(0.1)
+
+            time.sleep(0.02)
