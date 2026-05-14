@@ -92,6 +92,8 @@ while True:
 
         disc_motor.start()
 
+        time.sleep(0.25) # Wait a moment so the button 2 is released
+
         while True:
             # Step back a little and allow manual alignment
             if button1.is_pressed():
