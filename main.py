@@ -27,6 +27,18 @@ async def race(*coros):
 
 
 class BeadSorter:
+    """Main application class for bead sorting system.
+    
+    User flow:
+        1. Hold button1 to step disc back until aligned with insertion hole.
+        2. Insert bead and press button2 to start sorting.
+           First bead sets reference color, LED shows reference color.
+        3. If a bead gets stuck, hold button1 to step disc back and realign.
+           Then press button2 to continue.
+        4. To reset reference color, press button2.
+           Then align with hole and insert new reference bead.
+    """
+
     # Distance from normalized (0.0 - 1.0) reference color to consider a match.
     distance_thresholds = 0.035
 
@@ -43,23 +55,23 @@ class BeadSorter:
         self.color_sensor = ColorSensor(machine.I2C(0, sda=machine.Pin(0), scl=machine.Pin(1), freq=400000), led_pin_num=2)
         self.flipper_motor = FlipperMotor(26, revolutions_per_second=0.30)
         self.disc_motor = DiscMotor(9, revolutions_per_second=4/self.holes_per_revolution)  # 1 hole per second
-        self.disc_motor.set_irq_handler(self.irq_handler)
+        self.disc_motor.set_irq_handler(self.disc_irq_handler)
         self.color_data_file = ColorDataFile()
-        self.color_event = asyncio.Event()
+        self.bead_ready_event = asyncio.Event()
         self.reference_color = None
 
-    def irq_handler(self, sm):
-        self.color_event.set()
+    def disc_irq_handler(self, sm):
+        self.bead_ready_event.set()
 
     # --- Helpers ---
 
-    async def process_color(self):
-        """Main color processing loop with reference tracking."""
+    async def process_bead(self):
+        """Waits for bead to be in position, reads color, updates flipper and LED, and logs data."""
         flipper_position = False
         try:
             while True:
-                await self.color_event.wait()
-                self.color_event.clear()
+                await self.bead_ready_event.wait()
+                self.bead_ready_event.clear()
 
                 rgbc = await self.color_sensor.read_rgbc()
                 rgb = normalize_rgbc(rgbc)
@@ -113,7 +125,7 @@ class BeadSorter:
     async def running_state(self):
         """Disc motor runs and color data is recorded to CSV.
 
-        button1 pressed: stop motor, step back, transition to ALIGNMENT
+        button1 pressed: stop motor, transition to ALIGNMENT
         button2 pressed: stop motor, reset reference color, transition to ALIGNMENT
 
         Returns next state.
@@ -137,7 +149,7 @@ class BeadSorter:
     # --- Main loop ---
 
     async def run(self):
-        asyncio.create_task(self.process_color())
+        asyncio.create_task(self.process_bead())
         state = self.alignment_state
         while True:
             state = await state()  # type: ignore
