@@ -1,115 +1,158 @@
-import os
 import machine
-import time
+import asyncio
 
 from piostepper import DiscMotor, FlipperMotor
 from button import Button
 from color import ColorSensor, normalize_rgbc, distance
 from led import LED
+from ColorDataFile import ColorDataFile
 
-# Distance from normalized (0.0 - 1.0) reference color to consider a match.
-distance_thresholds = 0.035
 
-# One hole is 16 steps for a 28BYJ-48 stepper motor
-holes = 16
-one_hole = 512 // holes
-color_steps = 3
-flipper_steps = 40
-start_offset = -5
+async def race(*coros):
+    """Run coroutines concurrently, cancel losers, return index of winner."""
+    winner = [None]
+    done = asyncio.Event()
 
-disc_motor = DiscMotor(9, revolutions_per_second=3.5/holes)  # 1 hole per second
-flipper_motor = FlipperMotor(26, revolutions_per_second=0.30)
-button1 = Button(4)
-button2 = Button(5)
-color_sensor = ColorSensor(machine.I2C(0, sda=machine.Pin(0), scl=machine.Pin(1), freq=400000), led_pin_num=2)
-led = LED(pin_num=16, brightness=50.0, gamma=2.2)
+    async def run(i, coro):
+        await coro
+        if not done.is_set():
+            winner[0] = i
+            done.set()
 
-reference_color = None
-flipper_position = False
-new_color = False
-rgbc = (0, 0, 0, 0)
+    tasks = [asyncio.create_task(run(i, c)) for i, c in enumerate(coros)]
+    await done.wait()
+    for t in tasks:
+        t.cancel()
+    return winner[0]
 
-def irq_handler(sm):
-    global reference_color
-    global flipper_position
-    global new_color
-    global rgbc
 
-    rgbc = color_sensor.read_rgbc()
-    new_color = True
-    rgb = normalize_rgbc(rgbc)
+class BeadSorter:
+    """Main application class for bead sorting system.
+    
+    User flow:
+        1. Hold button1 to step disc back until aligned with insertion hole.
+        2. Insert bead and press button2 to start sorting.
+           First bead sets reference color, LED shows reference color.
+        3. If a bead gets stuck, hold button1 to step disc back and realign.
+           Then press button2 to continue.
+        4. To reset reference color, press button2.
+           Then align with hole and insert new reference bead.
+    """
 
-    if reference_color is None:
-        reference_color = rgb
-        flipper_motor.flip(True)  # Move flipper to initial position
-        flipper_position = True
-        led.set_color(reference_color[:3], brightness=50.0, gamma=2.2)  # Show reference color with LED
-    else:
-        dist = distance(rgb, reference_color)
+    # Distance from normalized (0.0 - 1.0) reference color to consider a match.
+    distance_thresholds = 0.035
 
-        match = dist < distance_thresholds
+    # One hole is 16 steps for a 28BYJ-48 stepper motor
+    steps_per_revolution = 512
+    holes_per_revolution = 16
+    one_hole = steps_per_revolution // holes_per_revolution
+    start_offset = -5
 
-        if match and flipper_position == False:
-            #disc_motor.pause()
-            flipper_motor.flip(True)
-            flipper_position = True
-            #disc_motor.resume()
-        elif not match and flipper_position == True:
-            #disc_motor.pause()
-            flipper_motor.flip(False)
-            flipper_position = False
-            #disc_motor.resume()
+    def __init__(self):
+        self.led = LED(16, brightness=50.0, gamma=2.2)
+        self.button1 = Button(4)
+        self.button2 = Button(5)
+        self.color_sensor = ColorSensor(machine.I2C(0, sda=machine.Pin(0), scl=machine.Pin(1), freq=400000), led_pin_num=2)
+        self.flipper_motor = FlipperMotor(26, revolutions_per_second=0.30)
+        self.disc_motor = DiscMotor(9, revolutions_per_second=4/self.holes_per_revolution)  # 1 hole per second
+        self.disc_motor.set_irq_handler(self.disc_irq_handler)
+        self.color_data_file = ColorDataFile()
+        self.bead_ready_event = asyncio.Event()
+        self.reference_color = None
 
-disc_motor.set_irq_handler(irq_handler)
+    def disc_irq_handler(self, sm):
+        self.bead_ready_event.set()
 
-file_number = 0
-files = os.listdir("data")
-for file in files:
-    if file.startswith("colors") and file.endswith(".csv"):
-        num = int(file[len("colors"):-4])
-        if num > file_number:
-            file_number = num
+    # --- Helpers ---
 
-reference_color = None
-while True:
-    if reference_color is None:
-        led.set_color((0.0, 0.0, 0.0)) # Turn off LED until reference color is set
+    async def process_bead(self):
+        """Waits for bead to be in position, reads color, updates flipper and LED, and logs data."""
+        flipper_position = False
+        try:
+            while True:
+                await self.bead_ready_event.wait()
+                self.bead_ready_event.clear()
 
-    color_sensor.set_led(True) # Turn on the color sensor LED to help with alignment
-    while True:
-        if button1.is_pressed():
-            disc_motor.step(-1)
-        if button2.is_pressed():
-            break
-        time.sleep(0.12)
-    color_sensor.set_led(False)
+                rgbc = await self.color_sensor.read_rgbc()
+                rgb = normalize_rgbc(rgbc)
 
-    file_number += 1
-    with open("data/colors{}.csv".format(file_number), "w") as fh:
-        fh.write("R, G, B, C\n")
+                # Open file and set reference if needed
+                if self.reference_color is None:
+                    self.reference_color = rgb
+                    self.flipper_motor.flip(True)
+                    flipper_position = True
+                    self.led.set_color(self.reference_color[:3], brightness=50.0, gamma=2.2)
+                    self.color_data_file.open()  # Closes any previous file and opens a new one
+                else:
+                    dist = distance(rgb, self.reference_color)
+                    match = dist < self.distance_thresholds
+                    if match and not flipper_position:
+                        self.flipper_motor.flip(True)
+                        flipper_position = True
+                    elif not match and flipper_position:
+                        self.flipper_motor.flip(False)
+                        flipper_position = False
+                    self.color_data_file.write(rgbc)
+        finally:
+            self.color_data_file.close()
 
-        disc_motor.step(start_offset) # Also includes backlash
+    # --- States ---
 
-        disc_motor.start()
+    async def alignment_state(self):
+        """User manually adjusts disc position.
 
-        time.sleep(0.25) # Wait a moment so the button 2 is released
+        button1 held: step disc back one step at a time
+        button2 pressed: confirm position and transition to RUNNING
 
+        Returns next state.
+        """
+        if self.reference_color is None:
+            self.led.set_color((0.0, 0.0, 0.0))  # Turn off LED until reference color is set
+
+        async def step_while_held():
+            while True:
+                while self.button1.is_pressed():
+                    self.disc_motor.step(-1)
+                    await asyncio.sleep_ms(120)
+                await self.button1.await_press()
+
+        self.color_sensor.set_led(True)
+        await race(step_while_held(), self.button2.await_press())
+        self.color_sensor.set_led(False)
+
+        return self.running_state
+
+    async def running_state(self):
+        """Disc motor runs and color data is recorded to CSV.
+
+        button1 pressed: stop motor, transition to ALIGNMENT
+        button2 pressed: stop motor, reset reference color, transition to ALIGNMENT
+
+        Returns next state.
+        """
+        self.disc_motor.step(self.start_offset)  # Also includes backlash
+        self.disc_motor.start()
+
+        winner = await race(self.button1.await_press(), self.button2.await_press())
+
+        self.disc_motor.stop()
+        if winner == 0:
+            # Step back a little and allow manual re-alignment
+            self.disc_motor.step(-5)
+        else:
+            # Rotate back for a new reference bead
+            self.disc_motor.step(-int(2.3 * self.one_hole))
+            self.reference_color = None
+
+        return self.alignment_state
+
+    # --- Main loop ---
+
+    async def run(self):
+        asyncio.create_task(self.process_bead())
+        state = self.alignment_state
         while True:
-            # Step back a little and allow manual alignment
-            if button1.is_pressed():
-                disc_motor.stop()
-                disc_motor.step(-5)
-                break
+            state = await state()  # type: ignore
 
-            # Rotate back for new reference bead
-            if button2.is_pressed():
-                disc_motor.stop()
-                disc_motor.step(-int(2.3 * one_hole))
-                reference_color = None
-                break
 
-            if new_color:
-                fh.write("{}, {}, {}, {}\n".format(*rgbc))
-                new_color = False
-
-            time.sleep(0.02)
+asyncio.run(BeadSorter().run())

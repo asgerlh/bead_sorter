@@ -1,5 +1,6 @@
 from machine import Pin
 import machine
+import asyncio
 import time
 import ustruct
 
@@ -28,8 +29,8 @@ class ColorSensor:
 
         # Enable the device (Power ON)
         self._write_byte(0x00, 0x01) # Power ON
-        time.sleep(0.1)
-        integration_periods = 20  # 20 periods = 48ms integration time
+        time.sleep_ms(100)
+        integration_periods = 25  # 25 periods = 60ms integration time
         self.integration_time_ms = 2.4 * integration_periods
         self._write_byte(0x01, 0xFF - integration_periods) # Integration time
         self._write_byte(0x0F, 0x02) # Gain
@@ -75,17 +76,15 @@ class ColorSensor:
         # Check if the 0th bit is set (0x01)
         return (status & 0x01) == 0x01
 
-    def read_rgbc(self):
+    async def read_rgbc(self):
         self.set_led(True)
-        
+
         # Start Integration (Enable ADC)
         self._write_byte(0x00, 0x01 | 0x02)
-        
-        # Wait for integration to complete (integration time + small buffer)
-        #time.sleep_ms(int(self.integration_time_ms) + 20)
 
+        await asyncio.sleep_ms(int(self.integration_time_ms))  # Yield for most of integration
         while not self._is_data_ready():
-            time.sleep_ms(10)  # Sleep briefly to avoid busy-waiting
+            await asyncio.sleep_ms(1)  # Tight poll for the last stretch
         
         # Get the data
         data = self._read_rgbc()
