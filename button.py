@@ -64,7 +64,6 @@ class Button:
             self._released_event.clear()
             await self._released_event.wait()
         self._pressed_event.clear()  # Discard any stale press event
-        print("Waiting for button press...")
         await self._pressed_event.wait()
         self._pressed_event.clear()
     
@@ -75,7 +74,6 @@ class Button:
         Automatically starts the pin monitoring task if not already running.
         """
         self._ensure_monitor()
-        print("Waiting for button release...")
         await self._released_event.wait()
         self._released_event.clear()
     
@@ -89,7 +87,6 @@ class Button:
         Automatically starts the pin monitoring task if not already running.
         """
         self._ensure_monitor()
-        print("Waiting for long press...")
         await self._long_press_event.wait()
         self._long_press_event.clear()
     
@@ -133,12 +130,10 @@ class Button:
                     if current_state == 0:  # Pressed (active LOW)
                         self._press_time_ms = utime.ticks_ms()
                         self._pressed_event.set()
-                        print("Button pressed")
                         self._long_press_event.clear()
                     else:  # Released
                         self._press_time_ms = None
                         self._released_event.set()
-                        print("Button released")
                         self._long_press_event.clear()
             
             # Check for long press while button is held
@@ -146,4 +141,3 @@ class Button:
                 hold_duration = int(utime.ticks_ms() - self._press_time_ms)
                 if hold_duration >= self.long_press_threshold_ms and not self._long_press_event.is_set():
                     self._long_press_event.set()
-                    print("Button long pressed")

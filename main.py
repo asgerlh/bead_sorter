@@ -57,11 +57,9 @@ class BeadSorter:
         """Main color processing loop with reference tracking."""
         flipper_position = False
         try:
-            print("Starting color processing loop...")
             while True:
                 await self.color_event.wait()
                 self.color_event.clear()
-                print("Color event triggered")
 
                 rgbc = await self.color_sensor.read_rgbc()
                 rgb = normalize_rgbc(rgbc)
@@ -83,7 +81,6 @@ class BeadSorter:
                         self.flipper_motor.flip(False)
                         flipper_position = False
                     self.color_data_file.write(rgbc)
-                    print("Read color RGB: {:.2f} {:.2f} {:.2f}, distance from reference: {:.4f}, match: {}".format(*rgb, dist, match))
         finally:
             self.color_data_file.close()
 
@@ -97,7 +94,6 @@ class BeadSorter:
 
         Returns next state.
         """
-        print("ALIGNMENT: Hold button1 to step back, press button2 to confirm.")
         if self.reference_color is None:
             self.led.set_color((0.0, 0.0, 0.0))  # Turn off LED until reference color is set
 
@@ -122,8 +118,6 @@ class BeadSorter:
 
         Returns next state.
         """
-        print("RUNNING: Press button1 to stop and realign, button2 to stop and reset reference color.")
-
         self.disc_motor.step(self.start_offset)  # Also includes backlash
         self.disc_motor.start()
 
@@ -132,11 +126,9 @@ class BeadSorter:
         self.disc_motor.stop()
         if winner == 0:
             # Step back a little and allow manual re-alignment
-            print("Stepping back for realignment...")
             self.disc_motor.step(-5)
         else:
             # Rotate back for a new reference bead
-            print("Resetting reference color and rotating disc for new bead...")
             self.disc_motor.step(-int(2.3 * self.one_hole))
             self.reference_color = None
 
