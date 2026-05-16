@@ -1,9 +1,10 @@
 import machine
 import asyncio
+import math
 
 from piostepper import DiscMotor, FlipperMotor
 from button import Button
-from color import ColorSensor, normalize_rgbc, distance
+from color import ColorSensor, rgbc_to_rgbw, distance
 from led import LED
 from ColorDataFile import ColorDataFile
 
@@ -40,7 +41,8 @@ class BeadSorter:
     """
 
     # Distance from normalized (0.0 - 1.0) reference color to consider a match.
-    distance_thresholds = 0.035
+    rgb_distance_threshold = 0.032
+    clear_distance_threshold = 1.0
 
     # One hole is 16 steps for a 28BYJ-48 stepper motor
     steps_per_revolution = 512
@@ -74,18 +76,20 @@ class BeadSorter:
                 self.bead_ready_event.clear()
 
                 rgbc = await self.color_sensor.read_rgbc()
-                rgb = normalize_rgbc(rgbc)
+                rgbw = rgbc_to_rgbw(rgbc)
+
 
                 # Open file and set reference if needed
                 if self.reference_color is None:
-                    self.reference_color = rgb
+                    self.reference_color = rgbw
                     self.flipper_motor.flip(True)
                     flipper_position = True
-                    self.led.set_color(self.reference_color[:3], brightness=50.0, gamma=2.2)
+                    self.led.set_color(self.reference_color[:3], brightness=self.reference_color[3] * 255.0, gamma=2.7)
                     self.color_data_file.open()  # Closes any previous file and opens a new one
                 else:
-                    dist = distance(rgb, self.reference_color)
-                    match = dist < self.distance_thresholds
+                    dist = distance(rgbw[:3], self.reference_color[:3])
+                    dist_clear = math.log2(abs(rgbw[3] - self.reference_color[3]) + 1e-10)
+                    match = dist < self.rgb_distance_threshold and dist_clear < self.clear_distance_threshold
                     if match and not flipper_position:
                         self.flipper_motor.flip(True)
                         flipper_position = True

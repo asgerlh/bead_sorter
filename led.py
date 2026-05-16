@@ -40,9 +40,15 @@ class LED:
 
     def set_color(self, rgb, brightness=None, gamma=None):
         """Set the color of the NeoPixel LED.
-        rgb: Tuple of values between 0.0 and 1.0 for red, green, and blue.
-        brightness: Value between 0.0 and 255.0 to scale the brightness.
-        gamma: Gamma correction factor to apply to the color values.
+
+        Parameters
+        ----------
+        rgb: tuple
+            Tuple of values between 0.0 and 1.0 for red, green, and blue.
+        brightness: float
+            Value between 0.0 and 255.0 to scale the brightness.
+        gamma: float
+            Gamma correction factor to apply to the color values.
         """
         if brightness is not None:
             brightness = max(0.0, min(255.0, brightness))

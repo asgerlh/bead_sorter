@@ -121,15 +121,19 @@ def distance(v1, v2):
     """
     return sum((a - b) ** 2 for a, b in zip(v1, v2)) ** 0.5
 
-def normalize_rgbc(rgbc):
-    """Normalizes an RGBC color tuple by its clear channel.
+def rgbc_to_rgbw(rgbc, calibration=[0.54, 0.75, 1.0], clear_normalization=25*1024):
+    """Convert raw RGBC values to normalized RGBW values using calibration factors and clear channel normalization.
+     - calibration: List of scaling factors for R, G, B channels to account for sensor sensitivity differences.
+     - clear_normalization: Value to normalize the clear channel, representing the maximum expected clear value (e.g., 25ms integration time at 16-bit resolution).
 
-    If the clear channel value is zero, it returns (0, 0, 0) to indicate no color.
+    If the clear channel value is zero, it returns (0, 0, 0, 0) to indicate no color.
     rgbc: Tuple of raw RGBC values (e.g., from the sensor).
     """
     if rgbc[3] == 0: # Avoid division by zero
-        return 0, 0, 0
-    return tuple(x / rgbc[3] for x in rgbc[:3])
+        return 0, 0, 0, 0
+    rgbw = tuple(x / rgbc[3] * c for x, c in zip(rgbc[:3], calibration))
+    rgbw += (rgbc[3] / clear_normalization,)  # Add normalized clear channel
+    return rgbw
 
 def normalize_color(rgb, threshold=500):
     """Normalizes an RGB color tuple to the range 0.0 - 1.0, applying a threshold to filter out very dark colors.
