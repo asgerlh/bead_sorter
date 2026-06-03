@@ -18,13 +18,9 @@ class DiscMotor:
         def pio():
             pull()                        # type: ignore
             mov(y, osr)                   # type: ignore
-            set(x, 31)                    # type: ignore
             wrap_target()                 # type: ignore
             jmp(not_osre, "skip_reload")  # type: ignore
             mov(osr, y)                   # type: ignore
-            jmp(x_dec, "skip_reload")     # type: ignore
-            irq(rel(0))                   # type: ignore
-            set(x, 31)                    # type: ignore
             label("skip_reload")          # type: ignore
             out(pins, 4) [31]             # type: ignore
             nop() [31]                    # type: ignore
@@ -50,13 +46,22 @@ class DiscMotor:
             nop() [31]                    # type: ignore
             nop() [31]                    # type: ignore
             nop() [31]                    # type: ignore
+            nop() [31]                    # type: ignore
+            nop() [31]                    # type: ignore
+            nop() [31]                    # type: ignore
+            nop() [31]                    # type: ignore
             wrap()                        # type: ignore
 
-        instructions_per_step = 24 * 32
+        instructions_per_step = 28 * 32
         self.revolutions_per_cycle = 512
         self.steps_per_cycle = 8
         freq = int(instructions_per_step * self.steps_per_cycle * self.revolutions_per_cycle * revolutions_per_second)
         self.sm = rp2.StateMachine(0, pio, set_base=machine.Pin(first_pin_nr), out_base=machine.Pin(first_pin_nr), freq=freq)
+        
+        pattern = 0b1001_0001_0011_0010_0110_0100_1100_1000 # Forward half step pattern
+        #pattern = 0b1000_1100_0100_0110_0010_0011_0001_1001 # Reverse half step pattern
+        
+        self.sm.put(pattern)
 
         # For stepping a specific number of steps, we need to encode the patterns as instructions to be executed in sequence.
         # We pre-encode the forward and reverse patterns so the step() method can execute them efficiently without needing to re-encode on each call.
@@ -81,47 +86,15 @@ class DiscMotor:
             rp2.asm_pio_encode("set(pins, 0b0001)", 0),
             rp2.asm_pio_encode("set(pins, 0b1001)", 0),
         )
-
-    def set_irq_handler(self, irq_handler):
-        """Sets the interrupt handler for when a full cycle of steps is completed.
-        
-        Parameters
-        ----------
-        irq_handler: function
-            The function to be called when the interrupt occurs.
-        """
-        self.sm.irq(irq_handler)
-
-    def start(self, forward=True):
-        """Starts the motor in the specified direction.
-
-        Note: This method is non-blocking and will return immediately after starting the motor.
-
-        Parameters
-        ----------
-        forward: bool
-            If True, the motor will rotate forward. If False, it will rotate in reverse.
-        """
-        if forward:
-            pattern = 0b1001_0001_0011_0010_0110_0100_1100_1000 # Forward half step pattern
-        else:
-            pattern = 0b1000_1100_0100_0110_0010_0011_0001_1001 # Reverse half step pattern
-        self.sm.put(pattern)
-        self.sm.active(1)
   
-    def pause(self):
-        """Pauses the motor."""
-        self.sm.active(0)
-    
-    def resume(self):
+    def start(self):
         """Resumes the motor."""
         self.sm.active(1)
-    
+
     def stop(self):
-        """Stops the motor."""
+        """Pauses the motor."""
         self.sm.active(0)
-        self.sm.restart()
-        self.sm.exec("set(pins, 0)")  # Turn off all pins after stopping
+        self.sm.exec("set(pins, 0)")  # Turn off all pins after stepping
     
     def step(self, steps : int = 1):
         """Steps the motor a specific number of steps.
@@ -133,8 +106,8 @@ class DiscMotor:
         steps: int
             Number of steps to move. Positive for forward, negative for reverse.
         """
-        if self.sm.active():
-            raise RuntimeError("Cannot call step() while motor is running. Please stop the motor first.")
+        # Stop the motor if it's currently running
+        self.sm.active(0)
 
         if steps > 0:
             pattern = self.forward_pattern_encoded

@@ -101,9 +101,9 @@ class ColorSensor:
         # Start Integration (Enable ADC)
         self._write_byte(0x00, 0x01 | 0x02)
     
-    def finish_read_rgbc(self):
+    async def finish_read_rgbc(self):
         while not self._is_data_ready():
-            time.sleep_ms(1)  # Tight poll for the last stretch
+            await asyncio.sleep_ms(1)  # Tight poll for the last stretch
         
         # Get the data
         data = self._read_rgbc()
@@ -140,13 +140,19 @@ def distance(v1, v2):
     """
     return sum((a - b) ** 2 for a, b in zip(v1, v2)) ** 0.5
 
-def rgbc_to_rgbw(rgbc, calibration=[0.54, 0.75, 1.0], clear_normalization=25*1024):
+def rgbc_to_rgbw(rgbc, calibration=[0.54, 0.75, 1.0], clear_normalization=30*1024):
     """Convert raw RGBC values to normalized RGBW values using calibration factors and clear channel normalization.
-     - calibration: List of scaling factors for R, G, B channels to account for sensor sensitivity differences.
-     - clear_normalization: Value to normalize the clear channel, representing the maximum expected clear value (e.g., 25ms integration time at 16-bit resolution).
 
     If the clear channel value is zero, it returns (0, 0, 0, 0) to indicate no color.
-    rgbc: Tuple of raw RGBC values (e.g., from the sensor).
+
+    Parameters
+    ----------
+    rgbc: tuple
+        Tuple of raw RGBC values (e.g., from the sensor).
+    calibration: list
+        List of scaling factors for R, G, B channels to account for sensor sensitivity differences.
+    clear_normalization: int
+        Value to normalize the clear channel, representing the maximum expected clear value (e.g., 30ms integration time at 16-bit resolution).
     """
     if rgbc[3] == 0: # Avoid division by zero
         return 0, 0, 0, 0
@@ -158,8 +164,13 @@ def normalize_color(rgb, threshold=500):
     """Normalizes an RGB color tuple to the range 0.0 - 1.0, applying a threshold to filter out very dark colors.
 
     If the norm of the RGB vector is below the threshold, it returns (0, 0, 0) to indicate no color.
-    rgb: Tuple of raw RGB values (e.g., from the sensor).
-    threshold: Minimum norm value to consider the color valid.
+
+    Parameters
+    ----------
+    rgb: tuple
+        Tuple of raw RGB values (e.g., from the sensor).
+    threshold: int
+        Minimum norm value to consider the color valid.
     """
     n = norm(rgb)
     if n < threshold:
@@ -167,6 +178,18 @@ def normalize_color(rgb, threshold=500):
     return tuple(x / n for x in rgb)
 
 def weighted_color(rgbc):
+    """Calculates a weighted color vector from RGBC values.
+
+    Parameters
+    ----------
+    rgbc: tuple
+        Tuple of raw RGBC values (e.g., from the sensor).
+
+    Returns
+    -------
+    list
+        List of normalized RGB values with the clear channel as weight.
+    """
     clear_norm = 100000
     rgbw = list(normalize_color(rgbc[:3]))
     rgbw.append(rgbc[3] / clear_norm)  # Add normalized clear channel as weight

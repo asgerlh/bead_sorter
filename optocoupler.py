@@ -1,38 +1,42 @@
-from piostepper import DiscMotor
 import machine
+import asyncio
 import time
-from color import ColorSensor, rgbc_to_rgbw, distance
 
-disc_motor = DiscMotor(9, revolutions_per_second=0.25) # 0.3 is max
-color_sensor = ColorSensor(machine.I2C(0, sda=machine.Pin(0), scl=machine.Pin(1), freq=400000), led_pin_num=2)
+class Optocoupler:
+    def __init__(self, pin_num=13):
+        self.pin = machine.Pin(pin_num, machine.Pin.IN)
+        self.pin.irq(trigger=machine.Pin.IRQ_RISING | machine.Pin.IRQ_FALLING, handler=self._irq_handler)
+        self.event_clear = asyncio.Event()
+        self.event_block = asyncio.Event()
 
-optocoupler_pin = machine.Pin(13, machine.Pin.IN)
+    def _irq_handler(self, pin):
+        time.sleep_ms(1) # debounce delay
+        if self.is_blocked():
+            self.event_block.set()
+        else:
+            self.event_clear.set()
 
-timestamp = 0
-
-def rotation_detected(pin):
-    global timestamp
-    time.sleep(0.02)  # Debounce delay
-    disc_motor.stop()
-    pin_state = pin.value()
-    if pin_state == 1:  # Rising edge: bead in position
-        # Start color reading
-        timestamp = time.ticks_ms()
-        color_sensor.start_read_rgbc()
-    else:  # Falling edge: set flipper
-        # Read color and set flipper
-        elapsed = time.ticks_diff(time.ticks_ms(), timestamp)
-        rgbc = color_sensor.finish_read_rgbc()
-        print("RGBW: ", rgbc)
-    disc_motor.start()
-
-optocoupler_pin.irq(trigger=machine.Pin.IRQ_RISING | machine.Pin.IRQ_FALLING,
-                    handler=rotation_detected)
-
-disc_motor.start()
-
-time.sleep(10)
-
-disc_motor.stop()
-
-time.sleep(0.1)
+    def is_blocked(self):
+        return self.pin.value() == 0
+    
+    async def await_clear(self, timeout=None):
+        if timeout is not None:
+            try:
+                await asyncio.wait_for(self.event_clear.wait(), timeout)
+            except asyncio.TimeoutError:
+                return False
+        else:
+            await self.event_clear.wait()
+        self.event_clear.clear()
+        return True
+    
+    async def await_block(self, timeout=None):
+        if timeout is not None:
+            try:
+                await asyncio.wait_for(self.event_block.wait(), timeout)
+            except asyncio.TimeoutError:
+                return False
+        else:
+            await self.event_block.wait()   
+        self.event_block.clear()
+        return True
