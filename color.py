@@ -30,7 +30,7 @@ class ColorSensor:
         # Enable the device (Power ON)
         self._write_byte(0x00, 0x01) # Power ON
         time.sleep_ms(100)
-        integration_periods = 25  # 25 periods = 60ms integration time
+        integration_periods = 30  # 30 periods = 72ms integration time
         self.integration_time_ms = 2.4 * integration_periods
         self._write_byte(0x01, 0xFF - integration_periods) # Integration time
         self._write_byte(0x0F, 0x02) # Gain
@@ -85,6 +85,25 @@ class ColorSensor:
         await asyncio.sleep_ms(int(self.integration_time_ms))  # Yield for most of integration
         while not self._is_data_ready():
             await asyncio.sleep_ms(1)  # Tight poll for the last stretch
+        
+        # Get the data
+        data = self._read_rgbc()
+        
+        # Clean up
+        self.set_led(False)
+        self._write_byte(0x00, 0x01) # Disable ADC again
+        
+        return data
+
+    def start_read_rgbc(self):
+        self.set_led(True)
+
+        # Start Integration (Enable ADC)
+        self._write_byte(0x00, 0x01 | 0x02)
+    
+    def finish_read_rgbc(self):
+        while not self._is_data_ready():
+            time.sleep_ms(1)  # Tight poll for the last stretch
         
         # Get the data
         data = self._read_rgbc()
