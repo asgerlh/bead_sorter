@@ -20,6 +20,8 @@ class Optocoupler:
         return self.pin.value() == 0
     
     async def await_clear(self, timeout=None):
+        # Clear any previous events to avoid false positives
+        self.event_clear.clear()
         if timeout is not None:
             try:
                 await asyncio.wait_for(self.event_clear.wait(), timeout)
@@ -31,6 +33,8 @@ class Optocoupler:
         return True
     
     async def await_block(self, timeout=None):
+        # Clear any previous events to avoid false positives
+        self.event_block.clear()
         if timeout is not None:
             try:
                 await asyncio.wait_for(self.event_block.wait(), timeout)

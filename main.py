@@ -44,7 +44,7 @@ class BeadSorter:
 
     # Distance from normalized (0.0 - 1.0) reference color to consider a match.
     rgb_distance_threshold = 0.032
-    clear_distance_threshold = 1.0
+    clear_distance_threshold = -2.5
 
     steps_per_revolution = 512
     holes_per_revolution = 24
@@ -55,7 +55,7 @@ class BeadSorter:
         self.button1 = Button(4)
         self.button2 = Button(5)
         self.color_sensor = ColorSensor(machine.I2C(0, sda=machine.Pin(0), scl=machine.Pin(1), freq=400000), led_pin_num=2)
-        self.flipper_motor = FlipperMotor(26, revolutions_per_second=0.30)
+        self.flipper_motor = FlipperMotor(26, revolutions_per_second=0.25)
         self.disc_motor = DiscMotor(9, revolutions_per_second=0.25)
         self.color_data_file = ColorDataFile()
         self.reference_color = None
@@ -63,6 +63,7 @@ class BeadSorter:
         self.flipper_position = False
         self.initial_state = self.alignment_state
         self.state_machine_task = None
+        self.timeout = 0.5
 
     # --- States ---
 
@@ -76,12 +77,18 @@ class BeadSorter:
         if self.reference_color is None:
             self.led.set_color((0.0, 0.0, 0.0))  # Turn off LED until reference color is set
 
-        self.disc_motor.step(-2 * self.steps_per_hole)
-        while not self.optocoupler.is_blocked():
-            self.disc_motor.step(-1)
+        # Rewind motor two holes to ensure an empty hole is available for insertion.
+        self.disc_motor.rewind()
+        for _ in range(3):
+            success = await self.optocoupler.await_block(timeout=2*self.timeout)
+            if not success:
+                print("Warning: Rewinding timed out, probably stuck.")
+        self.disc_motor.stop()
         
         print("Insert bead and press button 1 to start sorting.")
         await self.button1.await_press()
+
+        self.disc_motor.step(self.steps_per_hole)
 
         return self.bead_into_position_state
 
@@ -90,8 +97,8 @@ class BeadSorter:
 
         Returns next state.
         """
-        self.disc_motor.start()
-        success = await self.optocoupler.await_clear(timeout=0.3)
+        self.disc_motor.forward()
+        success = await self.optocoupler.await_clear(timeout=self.timeout)
         self.disc_motor.stop()
 
         if success:
@@ -104,10 +111,12 @@ class BeadSorter:
         
         Returns next state.
         """
+        #print("Bead is in position. Press button 1 read color.")
+        #await self.button1.await_press()
 
         self.color_sensor.start_read_rgbc()
-        self.disc_motor.start()
-        success = await self.optocoupler.await_block(timeout=0.3)
+        self.disc_motor.forward()
+        success = await self.optocoupler.await_block(timeout=self.timeout)
         self.disc_motor.stop()
         self.rgbc = await self.color_sensor.finish_read_rgbc()
 
@@ -125,6 +134,8 @@ class BeadSorter:
 
         if self.reference_color is None:
             self.reference_color = rgbw
+            print("New reference color:")
+            print("RGBC: [{rgbc}], RGBW: [{rgbw}]".format(rgbc=" ".join("{:5.0f}".format(x) for x in self.rgbc), rgbw=" ".join("{:.3f}".format(x) for x in rgbw)))
             self.color_data_file.open()  # Closes any previous file and opens a new one
         
         self.color_data_file.write(self.rgbc)
@@ -135,14 +146,14 @@ class BeadSorter:
         if match and not self.flipper_position:
             self.flipper_motor.flip(True)
             self.flipper_position = True
-            await asyncio.sleep(0.3)  # Wait for flipper to fully flip before allowing next action
+            await asyncio.sleep(0.15)  # Wait for flipper to fully flip before allowing next action
         elif not match and self.flipper_position:
             self.flipper_motor.flip(False)
             self.flipper_position = False
-            await asyncio.sleep(0.3)  # Wait for flipper to fully flip before allowing next action
+            await asyncio.sleep(0.15)  # Wait for flipper to fully flip before allowing next action
         
-        print("RGBC: {rgbc}, RGBW: {rgbw}, Distance: {dist:.4f}, Clear Distance: {dist_clear:.4f}, Match: {match}".format(rgbc=self.rgbc, rgbw=["{:.3f}".format(x) for x in rgbw ], dist=dist, dist_clear=dist_clear, match=match))
-        
+        print("RGBC: [{rgbc}], RGBW: [{rgbw}], Distance: {dist:.4f}, Clear Distance: {dist_clear:+6.2f}, Match: {match}".format(rgbc=" ".join("{:5.0f}".format(x) for x in self.rgbc), rgbw=" ".join("{:.3f}".format(x) for x in rgbw), dist=dist, dist_clear=dist_clear, match=match))
+
         return self.bead_into_position_state
     
     async def stuck_state(self):

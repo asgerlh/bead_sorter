@@ -58,11 +58,9 @@ class DiscMotor:
         freq = int(instructions_per_step * self.steps_per_cycle * self.revolutions_per_cycle * revolutions_per_second)
         self.sm = rp2.StateMachine(0, pio, set_base=machine.Pin(first_pin_nr), out_base=machine.Pin(first_pin_nr), freq=freq)
         
-        pattern = 0b1001_0001_0011_0010_0110_0100_1100_1000 # Forward half step pattern
-        #pattern = 0b1000_1100_0100_0110_0010_0011_0001_1001 # Reverse half step pattern
+        self.forward_pattern = 0b1001_0001_0011_0010_0110_0100_1100_1000 # Forward half step pattern
+        self.reverse_pattern = 0b1000_1100_0100_0110_0010_0011_0001_1001 # Reverse half step pattern
         
-        self.sm.put(pattern)
-
         # For stepping a specific number of steps, we need to encode the patterns as instructions to be executed in sequence.
         # We pre-encode the forward and reverse patterns so the step() method can execute them efficiently without needing to re-encode on each call.
         self.forward_pattern_encoded = (
@@ -87,12 +85,19 @@ class DiscMotor:
             rp2.asm_pio_encode("set(pins, 0b1001)", 0),
         )
   
-    def start(self):
-        """Resumes the motor."""
+    def forward(self):
+        self.sm.active(0)
+        self.sm.restart()
+        self.sm.put(self.forward_pattern)
+        self.sm.active(1)
+
+    def rewind(self):
+        self.sm.active(0)
+        self.sm.restart()
+        self.sm.put(self.reverse_pattern)
         self.sm.active(1)
 
     def stop(self):
-        """Pauses the motor."""
         self.sm.active(0)
         self.sm.exec("set(pins, 0)")  # Turn off all pins after stepping
     
@@ -136,6 +141,7 @@ class FlipperMotor:
                  out_init=[rp2.PIO.OUT_HIGH] * 4)
         def pio():
             label("start")                # type: ignore
+            set(pins, 0)                  # type: ignore
             pull()                        # type: ignore
             mov(y, osr)                   # type: ignore
             pull()                        # type: ignore
@@ -169,10 +175,9 @@ class FlipperMotor:
             nop() [31]                    # type: ignore
             nop() [31]                    # type: ignore
             nop() [31]                    # type: ignore
-            nop() [31]                    # type: ignore
             wrap()                        # type: ignore
 
-        instructions_per_step = 23 * 32
+        instructions_per_step = 22 * 32
         self.revolutions_per_cycle = 512
         self.steps_per_cycle = 8
         freq = int(instructions_per_step * self.steps_per_cycle * self.revolutions_per_cycle * revolutions_per_second)
@@ -278,4 +283,4 @@ class FlipperMotor:
         direction: bool
             If True, the motor will flip forward. If False, it will flip in reverse.
         """
-        self.start(forward=direction, steps=36)
+        self.start(forward=direction, steps=40)
