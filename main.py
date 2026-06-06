@@ -43,8 +43,8 @@ class BeadSorter:
     """
 
     # Distance from normalized (0.0 - 1.0) reference color to consider a match.
-    rgb_distance_threshold = 0.032
-    clear_distance_threshold = -2.5
+    rgb_distance_threshold = 0.012283
+    clear_distance_threshold = 0.9
 
     steps_per_revolution = 512
     holes_per_revolution = 24
@@ -141,7 +141,7 @@ class BeadSorter:
         self.color_data_file.write(self.rgbc)
 
         dist = distance(rgbw[:3], self.reference_color[:3])
-        dist_clear = math.log2(abs(rgbw[3] - self.reference_color[3]) + 1e-10)
+        dist_clear = abs(math.log2(rgbw[3] + 1e-10) - math.log2(self.reference_color[3] + 1e-10))
         match = dist < self.rgb_distance_threshold and dist_clear < self.clear_distance_threshold
         if match and not self.flipper_position:
             self.flipper_motor.flip(True)
