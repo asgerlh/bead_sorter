@@ -4,130 +4,127 @@ import asyncio
 import time
 import ustruct
 
+import asyncio
+from machine import Pin, I2C
+
 class ColorSensor:
-    """Class to interface with the TCS34725 color sensor, including LED control and RGB/C data reading.
-    The sensor is initialized with the I2C interface and an optional LED pin for illumination control.
-    i2c: An initialized I2C object for communication with the sensor.
-    led_pin_num: GPIO pin number for controlling the sensor's LED (optional).
-    address: I2C address of the TCS34725 sensor (default is 0x29).
+    """Class to interface with the TCS34725 color sensor, including LED control and RGBC data reading.
+    
+    The sensor is initialized with the I2C interface with interrupt and an LED pin for illumination control.
+    
+    Parameters
+    ----------
+    i2c: I2C
+        An initialized I2C object for communication with the sensor.
+    int_pin_num: int
+        GPIO pin number for the interrupt pin.
+    led_pin_num: int
+        GPIO pin number for controlling the sensor's LED.
     """
-    def __init__(self, i2c, led_pin_num=None, address=0x29):
+    TCS34725_ADDR = 0x29
+    CMD_BIT = 0x80
+    REG_ENABLE = 0x00
+    REG_ATIME = 0x01
+    REG_AILT = 0x04
+    REG_AIHT = 0x06
+    REG_APERS = 0x0C
+    REG_CONTROL = 0x0F
+    REG_CDATAL = 0x14
+
+    # Enable register states
+    ENABLE_ON = 0x13   # AIEN (Interrupt), AEN (ADC), PON (Power On)
+    ENABLE_OFF = 0x00  # Completely powered down
+
+    CMD_CLEAR_INT = 0xE6
+
+    def __init__(self, i2c : I2C, int_pin_num, led_pin_num):
         self.i2c = i2c
-        self.address = address
         
-        # LED Control Setup
-        if led_pin_num is not None:
-            self.led = Pin(led_pin_num, Pin.OUT)
-            self.led.value(0)
-        else:
-            self.led = None
+        # Setup Interrupt Pin (Sensor INT pulls LOW)
+        self.int_pin = Pin(int_pin_num, Pin.IN, Pin.PULL_UP)
+        self.data_ready = asyncio.Event()
+        self.int_pin.irq(trigger=Pin.IRQ_FALLING, handler=self._irq_handler)
+        
+        # Setup LED Control Pin
+        self.led_pin = Pin(led_pin_num, Pin.OUT)
+        self.led_pin.value(0) # Start with LED off
+        
+        self.running = False
 
-        # Check ID (Should be 0x44 or 0x4D)
-        cid = self._read_byte(0x12)
-        if cid not in (0x44, 0x4D):
-            raise RuntimeError(f"TCS34725 not found at 0x{address:02x}")
+    def _irq_handler(self, pin):
+        # Only trigger the event if the driver is actively running
+        if self.running:
+            self.data_ready.set()
 
-        # Enable the device (Power ON)
-        self._write_byte(0x00, 0x01) # Power ON
-        time.sleep_ms(100)
-        integration_periods = 30  # 30 periods = 72ms integration time
-        self.integration_time_ms = 2.4 * integration_periods
-        self._write_byte(0x01, 0xFF - integration_periods) # Integration time
-        self._write_byte(0x0F, 0x02) # Gain
+    def _write_reg(self, reg, value):
+        self.i2c.writeto_mem(self.TCS34725_ADDR, self.CMD_BIT | reg, bytes([value]))
 
-    def _write_byte(self, reg, value):
-        # 0x80 is the command bit required for every transaction
-        self.i2c.writeto_mem(self.address, 0x80 | reg, bytes([value]))
+    def _write_reg16(self, reg, value):
+        data = bytes([value & 0xFF, (value >> 8) & 0xFF])
+        self.i2c.writeto_mem(self.TCS34725_ADDR, self.CMD_BIT | reg, data)
 
-    def _read_byte(self, reg):
-        return self.i2c.readfrom_mem(self.address, 0x80 | reg, 1)[0]
-
-    def _read_word(self, reg):
-        data = self.i2c.readfrom_mem(self.address, 0x80 | reg, 2)
-        return ustruct.unpack('<H', data)[0]
-
-    def set_led(self, state):
-        """Sets the LED state (True for ON, False for OFF)."""
-        if self.led:
-            self.led.value(1 if state else 0)
-
-    def _read_rgbc(self):
+    def set_led(self, on):
+        """Control the sensor's LED state.
+        
+        Parameters
+        ----------
+        on: bool
+            True to turn the LED on, False to turn it off.
         """
-        Reads Clear, Red, Green, and Blue 16-bit values 
-        atomically in one transaction.
-        """
-        # Start reading from CDATA (0x14). Read 8 bytes (2 bytes x 4 channels)
-        # The command bit 0x80 is still required.
-        data = self.i2c.readfrom_mem(self.address, 0x80 | 0x14, 8)
+        self.led_pin.value(1 if on else 0)
+
+    def start(self):
+        """Turn on LED, configure registers, and enable reading loop"""
+        if self.running:
+            return # Already running
+            
+        self.set_led(True)
+        
+        # Configure thresholds to force an interrupt every single cycle
+        self._write_reg(self.REG_APERS, 0x00)
+        self._write_reg16(self.REG_AILT, 0xFFFF) # Low Threshold
+        self._write_reg16(self.REG_AIHT, 0x0000) # High Threshold
+
+        # Set integration time and gain
+        integration_time_periods = 3
+        self._write_reg(self.REG_ATIME, 0xFF - (integration_time_periods - 1))
+        self._write_reg(self.REG_CONTROL, 0x03) # 60x gain
+        
+        # Power up the internal ADC and enable interrupts
+        self._write_reg(self.REG_ENABLE, self.ENABLE_ON)
+        
+        # Clear any old interrupts to kickstart the hardware line
+        self.clear_sensor_interrupt()
+        self.data_ready.clear()
+        
+        self.running = True
+
+    def stop(self):
+        """Turn off LED, power down sensor state, and halt readings"""
+        self.running = False
+        
+        self.set_led(False)
+        
+        # Put sensor state machine into lower power / disabled mode
+        self._write_reg(self.REG_ENABLE, self.ENABLE_OFF)
+        self.data_ready.clear()
+
+    def clear_sensor_interrupt(self):
+        self.i2c.writeto(self.TCS34725_ADDR, bytes([self.CMD_CLEAR_INT]))
+
+    async def read_rgbc(self):
+        await self.data_ready.wait()
+        self.data_ready.clear()
+
+        data = self.i2c.readfrom_mem(self.TCS34725_ADDR, self.CMD_BIT | self.REG_CDATAL, 8)
+        self.clear_sensor_interrupt()
         
         # Unpack the 8 bytes into 4 unsigned little-endian shorts ('<HHHH')
         # Order in memory: Clear, Red, Green, Blue
         c, r, g, b = ustruct.unpack('<HHHH', data)
         
         return r, g, b, c
-    
-    def _is_data_ready(self):
-        """
-        Returns True if the integration cycle is complete (AVALID bit is 1).
-        """
-        # Read the STATUS register (0x13)
-        status = self._read_byte(0x13)
-        
-        # Check if the 0th bit is set (0x01)
-        return (status & 0x01) == 0x01
 
-    async def read_rgbc(self):
-        self.set_led(True)
-
-        # Start Integration (Enable ADC)
-        self._write_byte(0x00, 0x01 | 0x02)
-
-        await asyncio.sleep_ms(int(self.integration_time_ms))  # Yield for most of integration
-        while not self._is_data_ready():
-            await asyncio.sleep_ms(1)  # Tight poll for the last stretch
-        
-        # Get the data
-        data = self._read_rgbc()
-        
-        # Clean up
-        self.set_led(False)
-        self._write_byte(0x00, 0x01) # Disable ADC again
-        
-        return data
-
-    def start_read_rgbc(self):
-        self.set_led(True)
-
-        # Start Integration (Enable ADC)
-        self._write_byte(0x00, 0x01 | 0x02)
-    
-    async def finish_read_rgbc(self):
-        while not self._is_data_ready():
-            await asyncio.sleep_ms(1)  # Tight poll for the last stretch
-        
-        # Get the data
-        data = self._read_rgbc()
-        
-        # Clean up
-        self.set_led(False)
-        self._write_byte(0x00, 0x01) # Disable ADC again
-        
-        return data
-    
-# --- Usage Example for RP2040-Zero ---
-#i2c0 = I2C(0, sda=Pin(0), scl=Pin(1), freq=400000)
-#sensor = ColorSensor(i2c0, led_pin_num=2)
-
-#sensor.set_led(True)
-#print("RGB Clear Data:", sensor.read_rgbc())
-#sensor.set_led(False)
-
-#while True:
-#    sensor.set_led(True)
-#    data = sensor.read_rgbc()
-#    sensor.set_led(False)
-#    print("Data:", data)
-#    time.sleep(.5)
 
 def norm(v):
     """Returns the Euclidean norm (magnitude) of a vector v."""

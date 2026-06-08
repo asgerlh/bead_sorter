@@ -54,7 +54,7 @@ class BeadSorter:
         self.led = LED(16, brightness=50.0, gamma=2.2)
         self.button1 = Button(4)
         self.button2 = Button(5)
-        self.color_sensor = ColorSensor(machine.I2C(0, sda=machine.Pin(0), scl=machine.Pin(1), freq=400000), led_pin_num=2)
+        self.color_sensor = ColorSensor(machine.I2C(0, sda=machine.Pin(0), scl=machine.Pin(1), freq=400000), int_pin_num=3, led_pin_num=2)
         self.flipper_motor = FlipperMotor(26, revolutions_per_second=0.25)
         self.disc_motor = DiscMotor(9, revolutions_per_second=0.25)
         self.color_data_file = ColorDataFile()
@@ -64,6 +64,7 @@ class BeadSorter:
         self.initial_state = self.alignment_state
         self.state_machine_task = None
         self.timeout = 0.5
+        self.rgbc = (0, 0, 0, 0)
 
     # --- States ---
 
@@ -114,11 +115,16 @@ class BeadSorter:
         #print("Bead is in position. Press button 1 read color.")
         #await self.button1.await_press()
 
-        self.color_sensor.start_read_rgbc()
+        self.rgbc_readings = []  # Clear readings for next round
+        self.rgbc = (0, 0, 0, 0)
+        self.color_sensor.start()
+
         self.disc_motor.forward()
+
         success = await self.optocoupler.await_block(timeout=self.timeout)
         self.disc_motor.stop()
-        self.rgbc = await self.color_sensor.finish_read_rgbc()
+        
+        self.color_sensor.stop()
 
         if success:
             return self.analyze_color_state
@@ -130,6 +136,10 @@ class BeadSorter:
 
         Returns next state.
         """
+        # Print all rgbc readings
+        for rgbc in self.rgbc_readings:
+            print("RGBC: [{rgbc}]".format(rgbc=" ".join("{:5d}".format(x) for x in rgbc)))
+
         rgbw = rgbc_to_rgbw(self.rgbc)
 
         if self.reference_color is None:
@@ -166,14 +176,26 @@ class BeadSorter:
         
         return self.bead_into_position_state
     
+    async def color_reader(self):
+        self.rgbc = (0, 0, 0, 0)
+        self.rgbc_readings = []
+        while True:
+            rgbc = await self.color_sensor.read_rgbc()
+
+            self.rgbc_readings.append(rgbc)
+
+            # Save the RGBC reading with the highest clear channel value to self.rgbc
+            if rgbc[3] > self.rgbc[3]:
+                self.rgbc = rgbc
+    
     async def restart_on_button2(self):
         """Wait for button2 press to restart alignment state."""
         while True:
             await self.button2.await_press()
             print("Restarting...")
-            self.color_sensor.set_led(False)
             if self.state_machine_task is not None:
                 self.state_machine_task.cancel()
+            self.color_sensor.stop()
             self.reference_color = None
             self.color_data_file.close()
             self.initial_state = self.alignment_state
@@ -189,6 +211,7 @@ class BeadSorter:
 
     async def run(self):
         self.state_machine_task = asyncio.create_task(self.state_machine())
+        self.color_reader_task = asyncio.create_task(self.color_reader())
         while True:
             await self.restart_on_button2()
 
